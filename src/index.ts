@@ -12,7 +12,7 @@ const app = express();
 app.use(express.json());
 
 const server = new McpServer({
-  name: "Echo",
+  name: "hi-hello-mufuka",
   version: "1.0.0"
 });
 
@@ -114,7 +114,7 @@ app.listen(PORT, () => {
 // Base URL for the API, can be overridden by the environment variable MCP_API_URL
 const API_URL =
   process.env.MCP_API_URL ||
-  "https://hi-hello-mufuka-production.up.railway.app";
+"https://hi-hello-mufuka-production.up.railway.app";
 
 // Helper function for making API requests
 async function makeMCPRequest<T>(url: string, method: string, body?: any): Promise<T | null> {
