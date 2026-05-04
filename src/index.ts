@@ -105,22 +105,27 @@ app.delete('/mcp', async (req: Request, res: Response) => {
   }));
 });
 
-// In-memory store for subscribed widgets and notifications
-const subscribedWidgets = new Set<string>();
 const notificationStore = new Map<string, Array<{ id: string; fromWidgetId: string; message: string; timestamp: string }>>();
+
+function getRegisteredWidgets(): Set<string> {
+  if (!process.env.WIDGET_IDS) throw new Error("WIDGET_IDS environment variable is not set");
+  return new Set(process.env.WIDGET_IDS.split(",").map(id => id.trim()).filter(Boolean));
+}
 
 app.post('/subscribe', (req: Request, res: Response) => {
   const { widgetId } = req.body;
   if (!widgetId) return res.status(400).json({ success: false, error: "widgetId required" });
-  subscribedWidgets.add(widgetId);
-  notificationStore.set(widgetId, notificationStore.get(widgetId) || []);
+  if (!getRegisteredWidgets().has(widgetId)) {
+    return res.status(403).json({ success: false, error: `Widget ${widgetId} is not registered in WIDGET_IDS` });
+  }
+  if (!notificationStore.has(widgetId)) notificationStore.set(widgetId, []);
   res.json({ success: true });
 });
 
 app.post('/unsubscribe', (req: Request, res: Response) => {
   const { widgetId } = req.body;
   if (!widgetId) return res.status(400).json({ success: false, error: "widgetId required" });
-  subscribedWidgets.delete(widgetId);
+  notificationStore.delete(widgetId);
   res.json({ success: true });
 });
 
@@ -129,8 +134,8 @@ app.post('/notify', (req: Request, res: Response) => {
   if (!fromWidgetId || !toWidgetId || !message) {
     return res.status(400).json({ success: false, error: "fromWidgetId, toWidgetId, and message required" });
   }
-  if (!subscribedWidgets.has(toWidgetId)) {
-    return res.status(404).json({ success: false, error: `Widget ${toWidgetId} is not subscribed` });
+  if (!getRegisteredWidgets().has(toWidgetId)) {
+    return res.status(404).json({ success: false, error: `Widget ${toWidgetId} is not registered` });
   }
   const notification = { id: crypto.randomUUID(), fromWidgetId, message, timestamp: new Date().toISOString() };
   const inbox = notificationStore.get(toWidgetId) || [];
@@ -151,15 +156,14 @@ app.get('/info', (_req: Request, res: Response) => {
 });
 
 // Start the server
-const PORT = process.env.MCP_SERVER_PORT || 4000;
+const PORT = process.env.PORT || process.env.MCP_SERVER_PORT;
+if (!PORT) throw new Error("PORT environment variable is not set");
 app.listen(PORT, () => {
   console.log(`MCP Stateless Streamable HTTP Server listening on port ${PORT}`);
 });
 
-// Base URL for the API, can be overridden by the environment variable MCP_API_URL
-const API_URL =
-  process.env.MCP_API_URL ||
-"https://hi-hello-mufuka-production.up.railway.app";
+const API_URL = process.env.MCP_API_URL;
+if (!API_URL) throw new Error("MCP_API_URL environment variable is not set");
 
 // Helper function for making API requests
 async function makeMCPRequest<T>(url: string, method: string, body?: any): Promise<T> {
@@ -280,7 +284,7 @@ server.tool(
   async ({ widgetId }: { widgetId: string }) => {
     try {
       const response = await makeMCPRequest<NotificationsResponse>(`${API_URL}/notifications/${widgetId}`, "GET");
-      const notifications = response.notifications || [];
+      const notifications = response.notifications;
       if (notifications.length === 0) {
         return { content: [{ type: "text", text: `No notifications for widget ID: ${widgetId}` }] };
       }
@@ -298,11 +302,8 @@ server.tool(
   "Check which widget IDs are registered on this server",
   {},
   async () => {
-    const registered = (process.env.WIDGET_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
-    if (registered.length === 0) {
-      return { content: [{ type: "text", text: "No widgets registered." }] };
-    }
-    return { content: [{ type: "text", text: `Registered widgets:\n${registered.join("\n")}` }] };
+    const registered = getRegisteredWidgets();
+    return { content: [{ type: "text", text: `Registered widgets:\n${[...registered].join("\n")}` }] };
   },
 );
 
