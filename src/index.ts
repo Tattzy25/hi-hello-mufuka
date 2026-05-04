@@ -141,6 +141,7 @@ async function makeMCPRequest<T>(url: string, method: string, body?: any): Promi
 // Interfaces for request and response types
 interface SubscribeRequest {
   widgetId: string;
+  inviteToken: string;
 }
 
 interface UnsubscribeRequest {
@@ -175,10 +176,11 @@ server.tool(
   "Subscribe a widget to the notification system (invite only)",
   {
     widgetId: z.string().describe("The ID of the widget to subscribe"),
+    inviteToken: z.string().describe("The invite token required to subscribe"),
   },
-  async ({ widgetId }: SubscribeRequest) => {
+  async ({ widgetId, inviteToken }: SubscribeRequest) => {
     const url = `${API_URL}/subscribe`;
-    const response = await makeMCPRequest<{ success: boolean }>(url, "POST", { widgetId });
+    const response = await makeMCPRequest<{ success: boolean }>(url, "POST", { widgetId, inviteToken });
 
     if (!response) {
       return {
