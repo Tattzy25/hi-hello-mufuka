@@ -105,6 +105,51 @@ app.delete('/mcp', async (req: Request, res: Response) => {
   }));
 });
 
+// In-memory store for subscribed widgets and notifications
+const subscribedWidgets = new Set<string>();
+const notificationStore = new Map<string, Array<{ id: string; fromWidgetId: string; message: string; timestamp: string }>>();
+
+app.post('/subscribe', (req: Request, res: Response) => {
+  const { widgetId } = req.body;
+  if (!widgetId) return res.status(400).json({ success: false, error: "widgetId required" });
+  subscribedWidgets.add(widgetId);
+  notificationStore.set(widgetId, notificationStore.get(widgetId) || []);
+  res.json({ success: true });
+});
+
+app.post('/unsubscribe', (req: Request, res: Response) => {
+  const { widgetId } = req.body;
+  if (!widgetId) return res.status(400).json({ success: false, error: "widgetId required" });
+  subscribedWidgets.delete(widgetId);
+  res.json({ success: true });
+});
+
+app.post('/notify', (req: Request, res: Response) => {
+  const { fromWidgetId, toWidgetId, message } = req.body;
+  if (!fromWidgetId || !toWidgetId || !message) {
+    return res.status(400).json({ success: false, error: "fromWidgetId, toWidgetId, and message required" });
+  }
+  if (!subscribedWidgets.has(toWidgetId)) {
+    return res.status(404).json({ success: false, error: `Widget ${toWidgetId} is not subscribed` });
+  }
+  const notification = { id: crypto.randomUUID(), fromWidgetId, message, timestamp: new Date().toISOString() };
+  const inbox = notificationStore.get(toWidgetId) || [];
+  inbox.push(notification);
+  notificationStore.set(toWidgetId, inbox);
+  res.json({ success: true });
+});
+
+app.get('/notifications/:widgetId', (req: Request, res: Response) => {
+  const widgetId = req.params.widgetId as string;
+  const notifications = notificationStore.get(widgetId) || [];
+  notificationStore.set(widgetId, []);
+  res.json({ notifications });
+});
+
+app.get('/info', (_req: Request, res: Response) => {
+  res.json({ description: "MCP notification system for widgets and platforms", version: "1.0.0" });
+});
+
 // Start the server
 const PORT = process.env.MCP_SERVER_PORT || 4000;
 app.listen(PORT, () => {
@@ -117,25 +162,23 @@ const API_URL =
 "https://hi-hello-mufuka-production.up.railway.app";
 
 // Helper function for making API requests
-async function makeMCPRequest<T>(url: string, method: string, body?: any): Promise<T | null> {
+async function makeMCPRequest<T>(url: string, method: string, body?: any): Promise<T> {
   const headers = {
     "Content-Type": "application/json",
   };
 
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    console.error("Error making MCP request:", error);
-    return null;
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status} from ${url}: ${text}`);
   }
+
+  return (await response.json()) as T;
 }
 
 // Interfaces for request and response types
@@ -179,28 +222,15 @@ server.tool(
     inviteToken: z.string().describe("The invite token required to subscribe"),
   },
   async ({ widgetId, inviteToken }: SubscribeRequest) => {
-    const url = `${API_URL}/subscribe`;
-    const response = await makeMCPRequest<{ success: boolean }>(url, "POST", { widgetId, inviteToken });
-
-    if (!response) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to subscribe widget.",
-          },
-        ],
-      };
+    if (inviteToken !== process.env.INVITE_TOKEN) {
+      return { content: [{ type: "text", text: "Invalid invite token." }] };
     }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: response.success ? "Widget subscribed successfully." : "Failed to subscribe widget.",
-        },
-      ],
-    };
+    try {
+      const response = await makeMCPRequest<{ success: boolean }>(`${API_URL}/subscribe`, "POST", { widgetId, inviteToken });
+      return { content: [{ type: "text", text: response.success ? "Widget subscribed successfully." : "Subscribe returned success: false." }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
+    }
   },
 );
 
@@ -212,28 +242,12 @@ server.tool(
     widgetId: z.string().describe("The ID of the widget to unsubscribe"),
   },
   async ({ widgetId }: UnsubscribeRequest) => {
-    const url = `${API_URL}/unsubscribe`;
-    const response = await makeMCPRequest<{ success: boolean }>(url, "POST", { widgetId });
-
-    if (!response) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to unsubscribe widget.",
-          },
-        ],
-      };
+    try {
+      const response = await makeMCPRequest<{ success: boolean }>(`${API_URL}/unsubscribe`, "POST", { widgetId });
+      return { content: [{ type: "text", text: response.success ? "Widget unsubscribed successfully." : "Unsubscribe returned success: false." }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
     }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: response.success ? "Widget unsubscribed successfully." : "Failed to unsubscribe widget.",
-        },
-      ],
-    };
   },
 );
 
@@ -247,28 +261,12 @@ server.tool(
     message: z.string().describe("The notification message"),
   },
   async ({ fromWidgetId, toWidgetId, message }: NotificationRequest) => {
-    const url = `${API_URL}/notify`;
-    const response = await makeMCPRequest<{ success: boolean }>(url, "POST", { fromWidgetId, toWidgetId, message });
-
-    if (!response) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to send notification.",
-          },
-        ],
-      };
+    try {
+      const response = await makeMCPRequest<{ success: boolean }>(`${API_URL}/notify`, "POST", { fromWidgetId, toWidgetId, message });
+      return { content: [{ type: "text", text: response.success ? "Notification sent successfully." : "Notify returned success: false." }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
     }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: response.success ? "Notification sent successfully." : "Failed to send notification.",
-        },
-      ],
-    };
   },
 );
 
@@ -280,41 +278,31 @@ server.tool(
     widgetId: z.string().describe("The ID of the widget to retrieve notifications for"),
   },
   async ({ widgetId }: { widgetId: string }) => {
-    const url = `${API_URL}/notifications/${widgetId}`;
-    const response = await makeMCPRequest<NotificationsResponse>(url, "GET");
-
-    if (!response) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to retrieve notifications.",
-          },
-        ],
-      };
+    try {
+      const response = await makeMCPRequest<NotificationsResponse>(`${API_URL}/notifications/${widgetId}`, "GET");
+      const notifications = response.notifications || [];
+      if (notifications.length === 0) {
+        return { content: [{ type: "text", text: `No notifications for widget ID: ${widgetId}` }] };
+      }
+      const notificationsText = notifications.map(n => `From: ${n.fromWidgetId}, Message: ${n.message}, Time: ${n.timestamp}`).join("\n");
+      return { content: [{ type: "text", text: `Notifications for widget ID ${widgetId}:\n\n${notificationsText}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
     }
+  },
+);
 
-    const notifications = response.notifications || [];
-    if (notifications.length === 0) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `No notifications for widget ID: ${widgetId}`,
-          },
-        ],
-      };
+// @ts-ignore
+server.tool(
+  "get-registered",
+  "Check which widget IDs are registered on this server",
+  {},
+  async () => {
+    const registered = (process.env.WIDGET_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
+    if (registered.length === 0) {
+      return { content: [{ type: "text", text: "No widgets registered." }] };
     }
-
-    const notificationsText = notifications.map(n => `From: ${n.fromWidgetId}, Message: ${n.message}, Time: ${n.timestamp}`).join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Notifications for widget ID ${widgetId}:\n\n${notificationsText}`,
-        },
-      ],
-    };
+    return { content: [{ type: "text", text: `Registered widgets:\n${registered.join("\n")}` }] };
   },
 );
 
@@ -324,27 +312,11 @@ server.tool(
   "Get details on how the MCP Notification System works",
   {},
   async () => {
-    const url = `${API_URL}/info`;
-    const response = await makeMCPRequest<InfoResponse>(url, "GET");
-
-    if (!response) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to retrieve information about the notification system.",
-          },
-        ],
-      };
+    try {
+      const response = await makeMCPRequest<InfoResponse>(`${API_URL}/info`, "GET");
+      return { content: [{ type: "text", text: `Description: ${response.description}\nVersion: ${response.version}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
     }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Description: ${response.description}\nVersion: ${response.version}`,
-        },
-      ],
-    };
   },
 );
