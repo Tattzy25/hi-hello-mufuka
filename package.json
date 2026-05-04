@@ -1,0 +1,30 @@
+{
+  "name": "modelcontext-express",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "version": "1.0.0",
+  "description": "An example of using ModelContext with Express",
+  "scripts": {
+    "start": "node --loader ts-node/esm src/index.ts",
+    "dev": "node --loader ts-node/esm src/index.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.2.2"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2",
+    "zod": "^4.3.6"
+  }
+}
